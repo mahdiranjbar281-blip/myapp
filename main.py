@@ -50,6 +50,11 @@ def init_db():
     c.execute("""CREATE TABLE IF NOT EXISTS notes (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         title TEXT, content TEXT, tag TEXT, created_at TEXT)""")
+    # مهاجرت امن: افزودن ستون completed_at برای محاسبه‌ی استریک روزهای کاری
+    try:
+        c.execute("ALTER TABLE tasks ADD COLUMN completed_at TEXT")
+    except sqlite3.OperationalError:
+        pass
     conn.commit()
     conn.close()
 
@@ -74,13 +79,38 @@ def add_task(title, category, priority, due_date, notes):
                (title, category, priority, str(due_date), notes, str(datetime.now())))
 
 def toggle_task(tid, val):
-    run_write("UPDATE tasks SET done=? WHERE id=?", (int(val), tid))
+    if val:
+        run_write("UPDATE tasks SET done=1, completed_at=? WHERE id=?", (str(date.today()), tid))
+    else:
+        run_write("UPDATE tasks SET done=0, completed_at=NULL WHERE id=?", (tid,))
 
 def delete_task(tid):
     run_write("DELETE FROM tasks WHERE id=?", (tid,))
 
 def get_tasks():
     return run_read("SELECT * FROM tasks ORDER BY done ASC, due_date ASC")
+
+def get_streak():
+    """تعداد روزهای متوالی که حداقل یک وظیفه انجام شده، تا امروز."""
+    df = run_read("SELECT DISTINCT completed_at FROM tasks WHERE completed_at IS NOT NULL")
+    done_dates = set(df["completed_at"].tolist()) if not df.empty else set()
+    streak = 0
+    d = date.today()
+    while str(d) in done_dates:
+        streak += 1
+        d -= timedelta(days=1)
+    return streak
+
+def get_weekly_completions():
+    """تعداد وظایف انجام‌شده در هرکدام از ۷ روز اخیر."""
+    df = run_read("SELECT completed_at, COUNT(*) as cnt FROM tasks WHERE completed_at IS NOT NULL GROUP BY completed_at")
+    counts = dict(zip(df["completed_at"], df["cnt"])) if not df.empty else {}
+    days, values = [], []
+    for i in range(6, -1, -1):
+        d = date.today() - timedelta(days=i)
+        days.append(d)
+        values.append(counts.get(str(d), 0))
+    return days, values
 
 
 # ---------- Papers ----------
@@ -133,7 +163,7 @@ def get_notes():
 # =================================================================
 # تنظیمات ظاهری
 # =================================================================
-st.set_page_config(page_title="برنامه‌ریز پژوهشی", page_icon="🎓", layout="wide")
+st.set_page_config(page_title="صبا | برنامه‌ریز پژوهشی", page_icon="🌾", layout="wide")
 init_db()
 
 # --- پالت رنگی: گرم، کرم و ترکوتا (حس لوکس و آرام) ---
@@ -163,8 +193,11 @@ html, body, [class*="css"] {{
 .stApp {{
     background: {BG};
     background-image:
-        radial-gradient(circle at 15% 8%, rgba(193,102,47,0.05) 0%, transparent 45%),
-        radial-gradient(circle at 90% 85%, rgba(176,141,87,0.06) 0%, transparent 40%);
+        radial-gradient(circle at 12% 6%, rgba(193,102,47,0.07) 0%, transparent 42%),
+        radial-gradient(circle at 92% 12%, rgba(176,141,87,0.08) 0%, transparent 38%),
+        radial-gradient(circle at 88% 88%, rgba(138,154,91,0.05) 0%, transparent 42%),
+        radial-gradient(circle at 6% 92%, rgba(193,102,47,0.05) 0%, transparent 38%),
+        repeating-linear-gradient(135deg, rgba(43,38,32,0.012) 0px, rgba(43,38,32,0.012) 1px, transparent 1px, transparent 26px);
     color: {INK};
 }}
 
@@ -269,6 +302,72 @@ div[data-testid="stExpander"] summary {{ color: {INK} !important; font-weight: 6
 /* اسکرول‌بار ظریف */
 ::-webkit-scrollbar {{ width: 8px; }}
 ::-webkit-scrollbar-thumb {{ background: {BORDER}; border-radius: 8px; }}
+
+/* ===================== کارت هیرو (خوش‌آمدگویی) ===================== */
+.hero-card {{
+    position: relative;
+    overflow: hidden;
+    background: linear-gradient(135deg, #FFFDF9 0%, #FBF3E7 55%, #F6E9D6 100%);
+    border: 1px solid {BORDER};
+    border-radius: 26px;
+    padding: 38px 42px;
+    margin-bottom: 30px;
+    box-shadow: 0 4px 8px rgba(43,38,32,0.04), 0 18px 46px rgba(43,38,32,0.09);
+}}
+.hero-card::before {{
+    content: ""; position: absolute; width: 280px; height: 280px; border-radius: 50%;
+    background: radial-gradient(circle, rgba(193,102,47,0.22), transparent 70%);
+    top: -120px; left: -90px;
+}}
+.hero-card::after {{
+    content: ""; position: absolute; width: 240px; height: 240px; border-radius: 50%;
+    background: radial-gradient(circle, rgba(176,141,87,0.24), transparent 70%);
+    bottom: -100px; right: -70px;
+}}
+.hero-content {{ position: relative; z-index: 1; }}
+.hero-eyebrow {{
+    display: inline-block; font-size: 12px; font-weight: 700; letter-spacing: 0.5px;
+    color: {PRIMARY}; background: rgba(193,102,47,0.09); border: 1px solid rgba(193,102,47,0.25);
+    padding: 4px 14px; border-radius: 999px; margin-bottom: 14px;
+}}
+.hero-greeting {{
+    font-family: 'Noto Serif', serif; font-size: 30px; font-weight: 700;
+    color: {INK}; margin: 0 0 4px 0;
+}}
+.hero-date {{ color: {INK_SOFT}; font-size: 14px; margin-bottom: 18px; }}
+.hero-quote {{
+    font-size: 15px; color: {INK}; line-height: 2; max-width: 640px;
+    border-right: 3px solid {GOLD}; padding-right: 16px; margin-top: 14px;
+}}
+.streak-badge {{
+    display: inline-flex; align-items: center; gap: 8px;
+    background: linear-gradient(135deg, rgba(193,102,47,0.13), rgba(176,141,87,0.13));
+    border: 1px solid rgba(193,102,47,0.3); padding: 7px 18px; border-radius: 999px;
+    font-weight: 700; font-size: 14px; color: {PRIMARY_DARK}; margin-top: 18px;
+}}
+
+/* ===================== برندینگ سایدبار ===================== */
+.sidebar-logo {{ display: flex; align-items: center; gap: 12px; padding: 4px 0 20px 0; }}
+.logo-badge {{
+    width: 48px; height: 48px; border-radius: 15px; flex-shrink: 0;
+    background: linear-gradient(135deg, {PRIMARY} 0%, {GOLD} 100%);
+    display: flex; align-items: center; justify-content: center;
+    color: #FFF8F0; font-family: 'Noto Serif', serif; font-weight: 800; font-size: 23px;
+    box-shadow: 0 6px 16px rgba(193,102,47,0.35);
+}}
+.sidebar-brand-name {{ font-family: 'Noto Serif', serif; font-weight: 800; font-size: 21px; color: {INK}; line-height: 1.3; }}
+.sidebar-brand-tag {{ font-size: 11px; color: {INK_SOFT}; }}
+
+/* رادیو سایدبار به شکل آیتم‌های منو */
+section[data-testid="stSidebar"] div[role="radiogroup"] label {{
+    background: transparent; border-radius: 10px; padding: 9px 12px; margin-bottom: 2px;
+    transition: background 0.15s ease;
+}}
+section[data-testid="stSidebar"] div[role="radiogroup"] label:hover {{
+    background: rgba(193,102,47,0.08);
+}}
+
+.mini-card-title {{ font-size: 15px; font-weight: 800; margin-bottom: 4px; }}
 </style>
 """, unsafe_allow_html=True)
 
@@ -290,11 +389,54 @@ def status_badge(s):
 # پالت هماهنگ برای نمودارها
 CHART_COLORS = [PRIMARY, GOLD, WARNING, SAGE, DANGER, "#8C7A63"]
 
+PERSIAN_WEEKDAYS = ["دوشنبه", "سه‌شنبه", "چهارشنبه", "پنجشنبه", "جمعه", "شنبه", "یکشنبه"]
+PERSIAN_MONTHS = ["ژانویه", "فوریه", "مارس", "آوریل", "مه", "ژوئن",
+                   "ژوئیه", "اوت", "سپتامبر", "اکتبر", "نوامبر", "دسامبر"]
+
+MOTIVATION_QUOTES = [
+    "هر مقاله‌ای که امروز پیش می‌بری، یک قدم به رزومه‌ی دکترای رویاهات نزدیک‌ترت می‌کنه.",
+    "پیوستگی از شتاب مهم‌تره؛ فقط کافیه امروز یک قدم برداری.",
+    "بهترین زمان برای پیگیری ایمیل استادت، همین امروزه.",
+    "پژوهش خوب از یادداشت‌های کوچیک روزانه ساخته می‌شه، نه جهش‌های بزرگ.",
+    "هر بازنگری، مقاله‌ت رو یک قدم به پذیرش نزدیک‌تر می‌کنه.",
+    "نظم کوچیک امروز، آزادی بزرگ فرداست.",
+    "کارهای میدانی صبر می‌طلبن؛ داده‌های خوب عجله ندارن.",
+]
+
+
+def get_greeting():
+    hour = datetime.now().hour
+    if hour < 12:
+        return "صبح بخیر"
+    elif hour < 17:
+        return "ظهر بخیر"
+    elif hour < 20:
+        return "عصر بخیر"
+    return "شب بخیر"
+
+
+def get_persian_date_str():
+    now = datetime.now()
+    return f"{PERSIAN_WEEKDAYS[now.weekday()]} · {now.day} {PERSIAN_MONTHS[now.month - 1]} {now.year}"
+
+
+def get_daily_quote():
+    idx = date.today().toordinal() % len(MOTIVATION_QUOTES)
+    return MOTIVATION_QUOTES[idx]
+
 
 # =================================================================
 # سایدبار
 # =================================================================
-st.sidebar.markdown("## 🎓 برنامه‌ریز پژوهشی")
+st.sidebar.markdown("""
+<div class="sidebar-logo">
+    <div class="logo-badge">ص</div>
+    <div>
+        <div class="sidebar-brand-name">صبا</div>
+        <div class="sidebar-brand-tag">برنامه‌ریزی پژوهشی هوشمند</div>
+    </div>
+</div>
+""", unsafe_allow_html=True)
 st.sidebar.markdown("---")
 menu = st.sidebar.radio(
     "بخش‌ها",
@@ -302,7 +444,7 @@ menu = st.sidebar.radio(
     label_visibility="collapsed",
 )
 st.sidebar.markdown("---")
-st.sidebar.caption("ساخته‌شده برای مدیریت کارهای پژوهشی، مقالات و مکاتبات علمی 🌙")
+st.sidebar.caption("همراه روزانه‌ی تو برای مدیریت مقالات، وظایف و مکاتبات علمی 🌾")
 
 TASK_CATEGORIES = ["مقاله", "درس", "مکاتبه", "داده/آمار", "پایان‌نامه", "سایر"]
 TASK_PRIORITIES = ["زیاد", "متوسط", "کم"]
@@ -316,6 +458,23 @@ if menu == "🏠 داشبورد":
     papers = get_papers()
     contacts = get_contacts()
     notes = get_notes()
+    streak = get_streak()
+
+    streak_html = (f'<div class="streak-badge">🔥 {streak} روز متوالی کار پژوهشی</div>'
+                   if streak > 0 else
+                   '<div class="streak-badge">🌱 امروز اولین قدم رو بردار</div>')
+
+    st.markdown(f"""
+    <div class="hero-card">
+        <div class="hero-content">
+            <span class="hero-eyebrow">🌾 صبا · دستیار پژوهشی تو</span>
+            <div class="hero-greeting">{get_greeting()}، مهدی</div>
+            <div class="hero-date">📅 {get_persian_date_str()}</div>
+            <div class="hero-quote">« {get_daily_quote()} »</div>
+            {streak_html}
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
 
     st.markdown('<div class="section-title">نمای کلی</div>', unsafe_allow_html=True)
 
@@ -326,16 +485,36 @@ if menu == "🏠 داشبورد":
     total_notes = len(notes) if not notes.empty else 0
 
     for col, val, label, color in [
-        (c1, open_tasks, "وظایف باز", PRIMARY),
-        (c2, active_papers, "مقالات فعال", GOLD),
-        (c3, waiting, "منتظر پاسخ ایمیل", DANGER),
-        (c4, total_notes, "یادداشت‌ها", SAGE),
+        (c1, open_tasks, "✅ وظایف باز", PRIMARY),
+        (c2, active_papers, "📄 مقالات فعال", GOLD),
+        (c3, waiting, "📧 منتظر پاسخ ایمیل", DANGER),
+        (c4, total_notes, "📝 یادداشت‌ها", SAGE),
     ]:
         col.markdown(f"""
         <div class="metric-card">
             <div class="metric-label">{label}</div>
             <div class="metric-value" style="color:{color}">{val}</div>
         </div>""", unsafe_allow_html=True)
+
+    st.markdown("<br>", unsafe_allow_html=True)
+    st.markdown('<div class="section-title" style="font-size:18px;">📈 روند هفتگی پیشرفت</div>', unsafe_allow_html=True)
+    week_days, week_values = get_weekly_completions()
+    week_labels = [f"{PERSIAN_WEEKDAYS[d.weekday()][:3]} {d.day}" for d in week_days]
+    trend_fig = go.Figure()
+    trend_fig.add_trace(go.Scatter(
+        x=week_labels, y=week_values, mode="lines+markers",
+        line=dict(color=PRIMARY, width=3, shape="spline"),
+        marker=dict(size=8, color=PRIMARY, line=dict(width=2, color="#FFFEFC")),
+        fill="tozeroy", fillcolor="rgba(193,102,47,0.10)",
+    ))
+    trend_fig.update_layout(
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+        font_color=INK, font_family="Vazirmatn",
+        margin=dict(t=10, b=10, l=10, r=10), height=200,
+        xaxis=dict(showgrid=False, color=INK_SOFT),
+        yaxis=dict(showgrid=True, gridcolor=BORDER, color=INK_SOFT, tick0=0, dtick=1),
+    )
+    st.plotly_chart(trend_fig, use_container_width=True)
 
     st.markdown("<br>", unsafe_allow_html=True)
     colA, colB = st.columns([1, 1])
